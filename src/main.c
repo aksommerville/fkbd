@@ -1,139 +1,201 @@
 #include "fkbd.h"
+#include <signal.h>
+#include <sys/poll.h>
 
-struct fkbd fkbd={0};
+struct g g={0};
 
-/* Signal.
+/* Signal handler.
  */
  
 static void rcvsig(int sigid) {
   switch (sigid) {
-    case SIGINT: if (++(fkbd.sigc)>=3) {
-        fprintf(stderr,"Too many unprocessed signals.\n");
+    case SIGINT: if (++(g.sigc)>=3) {
+        fprintf(stderr,"%s: Too many unprocessed signals.\n",g.exename);
         exit(1);
       } break;
   }
 }
 
-/* Cleanup.
+/* Connect device.
+ */
+
+int fkbd_connect_path(const char *path) {
+
+  // Disconnect whatever's connected, even if it's the same as the request.
+  evdev_disconnect();
+  uinput_close();
+  
+  // If not empty, make a new connection.
+  if (path&&path[0]) {
+    if (evdev_connect(path)<0) return -1;
+    if (uinput_open(path)<0) return -1;
+  }
+  
+  return 0;
+}
+
+/* Update one file.
+ * We prefer to close and cleanup in response to errors, rather than returning the error.
+ * If we return <0 it's fatal.
  */
  
-static void fkbd_quit() {
-  if (fkbd.uifd>0) close(fkbd.uifd);
-  if (fkbd.evfd>0) close(fkbd.evfd);
-  memset(&fkbd,0,sizeof(fkbd));
+static int update_fdr(int fd) {
+
+  if (fd==g.http_server) {
+    return http_accept();
+  }
+  
+  if (fd==g.evdev_fd) {
+    int err=evdev_update();
+    if (err<0) {
+      if (err!=-2) fprintf(stderr,"%s: Unspecified error reading from evdev device.\n",g.exename);
+      close(g.evdev_fd);
+      g.evdev_fd=-1;
+      if (g.evdev_path) { free(g.evdev_path); g.evdev_path=0; }
+      if (g.evdev_name) { free(g.evdev_name); g.evdev_name=0; }
+      uinput_close();
+    }
+    return 0;
+  }
+
+  struct http_client *client=g.http_clientv;
+  int i=g.http_clientc;
+  for (;i-->0;client++) {
+    if (client->fd!=fd) continue;
+    int err=http_client_read(client);
+    if (err<0) {
+      if (err!=-2) fprintf(stderr,"%s: Closing http client %d due to failed read.\n",g.exename,client->fd);
+      close(client->fd);
+      client->fd=-1;
+    }
+    return 0;
+  }
+
+  return 0;
+}
+
+static int update_fdw(int fd) {
+  /* Only (http_client) poll for writing.
+   * (uinput_fd) is also writeable, but we block on it.
+   */
+  struct http_client *client=g.http_clientv;
+  int i=g.http_clientc;
+  for (;i-->0;client++) {
+    if (client->fd!=fd) continue;
+    int err=http_client_write(client);
+    if (err<0) {
+      if (err!=-2) fprintf(stderr,"%s: Closing http client %d due to failed write.\n",g.exename,client->fd);
+      close(client->fd);
+      client->fd=-1;
+    }
+    return 0;
+  }
+  return 0;
+}
+
+/* Update.
+ */
+ 
+static int update() {
+  #define FDLIMIT 8
+  struct pollfd pollfdv[FDLIMIT]={0};
+  int pollfdc=0;
+  
+  if (g.evdev_fd>=0) pollfdv[pollfdc++]=(struct pollfd){.fd=g.evdev_fd,.events=POLLIN|POLLERR|POLLHUP};
+  
+  if (g.http_server>=0) pollfdv[pollfdc++]=(struct pollfd){.fd=g.http_server,.events=POLLIN|POLLERR|POLLHUP};
+  
+  struct http_client *client=g.http_clientv;
+  int i=g.http_clientc,defunct=0;
+  for (;i-->0;client++) {
+    if (client->fd<0) {
+      defunct=1;
+      continue;
+    }
+    if (pollfdc>=FDLIMIT) break;
+    struct pollfd *pollfd=pollfdv+pollfdc++;
+    pollfd->fd=client->fd;
+    if (client->wbufc>0) {
+      pollfd->events=POLLOUT|POLLERR|POLLHUP;
+    } else {
+      pollfd->events=POLLIN|POLLERR|POLLHUP;
+    }
+  }
+  
+  if (defunct) {
+    for (client=g.http_clientv+g.http_clientc-1,i=g.http_clientc;i-->0;client--) {
+      if (client->fd>=0) continue;
+      http_client_cleanup(client);
+      g.http_clientc--;
+      memmove(client,client+1,sizeof(struct http_client)*(g.http_clientc-i));
+    }
+  }
+  
+  // Nothing for (g.uinput_fd); it is write-only.
+  
+  if (pollfdc<1) {
+    fprintf(stderr,"%s: All connections closed.\n",g.exename);
+    return -2;
+  }
+  int err=poll(pollfdv,pollfdc,1000);
+  if (err<1) return 0;
+  
+  struct pollfd *pollfd=pollfdv;
+  for (i=pollfdc;i-->0;pollfd++) {
+    if (pollfd->revents&(POLLIN|POLLERR|POLLHUP)) err=update_fdr(pollfd->fd);
+    else if (pollfd->revents&POLLOUT) err=update_fdw(pollfd->fd);
+    else continue;
+    if (err<0) {
+      if (err!=-2) fprintf(stderr,"%s: Unspecified error updating fd %d\n",g.exename,pollfd->fd);
+      return -2;
+    }
+  }
+  
+  #undef FDLIMIT
+  return 0;
 }
 
 /* Main.
  */
  
 int main(int argc,char **argv) {
-  if ((argc>=1)&&argv&&argv[0]&&argv[0][0]) fkbd.exename=argv[0];
-  else fkbd.exename="fkbd";
-
+  int err;
+  
+  g.exename="fkbd";
+  g.htdocs="src/www"; // XXX We can only run from this project's directory.
+  g.evdev_devices_path="/dev/input";
+  g.http_port=4444;
+  g.http_server=-1;
+  g.evdev_fd=-1;
+  g.ui_key_fd=-1;
+  g.ui_mouse_fd=-1;
+  
+  if ((argc>=1)&&argv&&argv[0]&&argv[0][0]) g.exename=argv[0];
+  
   signal(SIGINT,rcvsig);
   
-  /* Read command line.
-   */
-  int argi=1;
-  while (argi<argc) {
-    const char *arg=argv[argi++];
-    if (!arg||!arg[0]) continue;
-    
-    // No dash: evdev path.
-    if (arg[0]!='-') {
-      if (fkbd.evdev_path) {
-        fprintf(stderr,"%s: Multiple source paths.\n",fkbd.exename);
-        return 1;
-      }
-      fkbd.evdev_path=arg;
-      continue;
-    }
-    
-    if (!strcmp(arg,"--help")) {
-      fprintf(stderr,
-        "\n"
-        "Usage: %s EVDEV_PATH --map=MAP_NAME\n"
-        "   Or: %s --tattle EVDEV_PATH\n"
-        "Creates a fake keyboard device via uinput and echoes events from the given gamepad.\n"
-        "Find your evdev device in /proc/bus/input/devices.\n"
-        "\n"
-      ,fkbd.exename,fkbd.exename);
-      fkbd_uinput_log_map_names();
-      return 0;
-    }
-    
-    if (!strcmp(arg,"--tattle")) {
-      fkbd.tattle=1;
-      continue;
-    }
-    
-    if (!memcmp(arg,"--map=",6)) {
-      if (fkbd_uinput_map(arg+6)<0) {
-        fprintf(stderr,"%s: Unknown map '%s'.\n",fkbd.exename,arg+6);
-        fkbd_uinput_log_map_names();
-        return 1;
-      }
-      continue;
-    }
-    
-    fprintf(stderr,"%s: Unexpected argument '%s'.\n",fkbd.exename,arg);
-    return 1;
-  }
-  if (!fkbd.evdev_path) {
-    fprintf(stderr,"%s: Expected source path.\n",fkbd.exename);
+  if ((err=http_init())<0) {
+    if (err!=-2) fprintf(stderr,"%s: Unspecified error initializing HTTP server.\n",g.exename);
     return 1;
   }
   
-  /* Prepare evdev.
-   */
-  if (fkbd_evdev_open()<0) return 1;
-  if (!fkbd.tattle&&!memcmp(fkbd.dstmap,"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",32)) {
-    fprintf(stderr,"%s: Please specify a map with '--map=NAME'.\n",fkbd.exename);
-    fkbd_uinput_log_map_names();
+  if ((err=evdev_init())<0) {
+    if (err!=-2) fprintf(stderr,"%s: Unspecified error initializing evdev.\n",g.exename);
     return 1;
   }
   
-  /* Prepare uinput.
-   */
-  if (!fkbd.tattle) {
-    if (fkbd_uinput_open()<0) return 1;
+  if ((err=map_init())<0) {
+    if (err!=-2) fprintf(stderr,"%s: Unspecified error initializing map store.\n",g.exename);
+    return 1;
   }
   
-  /* Main loop.
-   * We have a single input source, so there's no poll, just block on read.
-   * ...hmm actually SIGINT is not interrupting our reads. So do poll for just the one file.
-   */
-  fprintf(stderr,"%s running...\n",fkbd.exename);
-  while (!fkbd.sigc) {
-    struct pollfd pollfd={.fd=fkbd.evfd,.events=POLLIN|POLLERR|POLLHUP};
-    if (poll(&pollfd,1,1000)<=0) continue;
-    struct input_event eventv[32];
-    int eventc=read(fkbd.evfd,eventv,sizeof(eventv));
-    if (eventc<=0) {
-      fprintf(stderr,"%s:read: %m\n",fkbd.evdev_path);
-      break;
-    }
-    eventc/=sizeof(struct input_event);
-    struct input_event *event=eventv;
-    for (;eventc-->0;event++) {
-      if (event->type==EV_SYN) continue;
-      if (event->type==EV_MSC) continue;
-      if (fkbd.tattle) {
-        if (event->value) fprintf(stderr,"EVENT: %02x.%04x = %d\n",event->type,event->code,event->value);
-        continue;
-      }
-      fkbd_evdev_update(event->type,event->code,event->value);
-      if (fkbd.state!=fkbd.pvstate) {
-        //fprintf(stderr,"STATE CHANGED: 0x%04x <= 0x%04x\n",fkbd.state,fkbd.pvstate);
-        if (fkbd_uinput_update()<0) {
-          return 1;
-        }
-        fkbd.pvstate=fkbd.state;
-      }
+  while (!g.sigc) {
+    if ((err=update())<0) {
+      if (err!=-2) fprintf(stderr,"%s: Unspecified error updating program.\n",g.exename);
+      return 1;
     }
   }
   
-  fprintf(stderr,"%s: Normal exit.\n",fkbd.exename);
-  fkbd_quit();
+  fprintf(stderr,"%s: Normal exit.\n",g.exename);
   return 0;
 }

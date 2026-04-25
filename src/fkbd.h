@@ -1,70 +1,112 @@
+/* fkbd.h
+ * Fake Keyboard, version 2.
+ * This will be considerably more advanced than v1. v1 is preserved under etc/ if we want to go back.
+ * Changes from v1:
+ *  - HTTP server.
+ *  - Monitor /dev/input with inotify.
+ *  - - Actually no. There won't be live updating in the web app, just a Refresh button. So no need to monitor.
+ *  - Cheesy web app to monitor devices.
+ *  - Map to mouse buttons in addition to keyboard, for those fucking obnoxious games that require a mouse click.
+ *  - - Note that if the mouse is needed as a pointer, we're not going to try faking that. Just use the mouse.
+ *  - Set up mapping on the fly.
+ * I think we're still going to operate on just one input device at a time, why would we ever need more?
+ */
+
 #ifndef FKBD_H
 #define FKBD_H
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <limits.h>
 #include <stdint.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <sys/signal.h>
-#include <sys/ioctl.h>
-#include <sys/poll.h>
 #include <linux/input.h>
 #include <linux/input-event-codes.h>
-#include <linux/uinput.h>
+#include "serial/serial.h"
 
-#define FKBD_MAP_LIMIT 64
-
-struct fkbd_map {
-  int srctype,srccode;
-  int dstbtnid;
-  int srclo,srchi;
-  int srcvalue,dstvalue;
-  int mode; // 2,3,4 = two-state, three-way, hat
-};
-
-extern struct fkbd {
-  volatile int sigc;
+extern struct g {
   const char *exename;
-  int uifd;
-  const char *evdev_path;
-  int evfd;
-  uint16_t state; // Mapped source device.
-  uint16_t pvstate;
-  int tattle; // If nonzero, don't open uinput and just dump evdev events.
-  struct fkbd_map mapv[FKBD_MAP_LIMIT];
-  int mapc;
-  uint16_t dstmap[16]; // KEY_ codes indexed by the bit index of (state).
-} fkbd;
+  volatile int sigc;
+  const char *htdocs;
+  const char *evdev_devices_path;
+  
+  int http_port;
+  int http_server; // fd
+  
+  struct http_client {
+    int fd;
+    char *rbuf;
+    int rbufp,rbufc,rbufa;
+    char *wbuf;
+    int wbufp,wbufc,wbufa;
+  } *http_clientv;
+  int http_clientc,http_clienta;
+  
+  struct evdev_device {
+    char *path;
+    char *name;
+    struct input_id id;
+    uint8_t btnbit[(KEY_MAX+1)>>7];
+    uint8_t absbit[(ABS_MAX+1)>>7];
+    struct input_absinfo absinfo[ABS_MAX+1];
+  } *evdev_devicev;
+  int evdev_devicec,evdev_devicea;
+  
+  int evdev_fd;
+  char *evdev_path; // Copied on open, in case evdev_devicev gets rebuilt.
+  char *evdev_name;
+  
+  int ui_key_fd;
+  int ui_mouse_fd;
+  //TODO device id etc, keep on hand
+  
+  struct map {
+    char *name;
+    int namec;
+    struct button {
+      int srctype,srcbtnid;
+      int srclo,srchi;
+      int dstbtnid;
+      int srcvalue; // Volatile
+    } *buttonv;
+    int buttonc,buttona;
+  } *mapv;
+  int mapc,mapa;
+  struct map *map; // WEAK, points into (mapv).
+} g;
 
-int fkbd_uinput_open();
-int fkbd_uinput_event(int code,int value);
-int fkbd_uinput_update(); // Fire whatever events are needed according to (state,pvstate).
-int fkbd_uinput_map(const char *name);
-void fkbd_uinput_log_map_names();
+int http_init();
+int http_accept();
+void http_client_cleanup(struct http_client *client);
+int http_client_read(struct http_client *client);
+int http_client_write(struct http_client *client);
+int http_request_measure(const char *src,int srcc);
+int http_measure_line(const char *src,int srcc); // 0 if not terminated by CRLF.
+int memcasecmp(const char *a,const char *b,int c);
+int http_serve(struct http_client *client,const char *req,int reqc); // Must not modify (rbuf).
+int http_serve_split(struct http_client *client,const char *method,int methodc,const char *path,int pathc,const char *query,int queryc,const void *body,int bodyc);
+int http_client_wbuf_append(struct http_client *client,const char *src,int srcc);
+int http_client_wbuf_require(struct http_client *client);
 
-int fkbd_evdev_open();
-void fkbd_evdev_update(int type,int code,int value); // Updates (fkbd.state) accordingly.
+int evdev_init();
+int evdev_update();
+int evdev_scan(); // Drops all devices and rebuilds.
+void evdev_device_cleanup(struct evdev_device *device);
+void evdev_disconnect(); // Cleans up g.(evdev_fd,evdev_path,evdev_name)
+int evdev_connect(const char *path);
 
-/* Source evdev devices map to an abbreviated Standard Gamepad.
- * Not bothering to name the analogue sticks (or to decide whether they should quantize before or after this mapping).
- */
-#define FKBD_BTN_LEFT      0x0001
-#define FKBD_BTN_RIGHT     0x0002
-#define FKBD_BTN_UP        0x0004
-#define FKBD_BTN_DOWN      0x0008
-#define FKBD_BTN_SOUTH     0x0010
-#define FKBD_BTN_WEST      0x0020
-#define FKBD_BTN_EAST      0x0040
-#define FKBD_BTN_NORTH     0x0080
-#define FKBD_BTN_L1        0x0100
-#define FKBD_BTN_R1        0x0200
-#define FKBD_BTN_L2        0x0400
-#define FKBD_BTN_R2        0x0800
-#define FKBD_BTN_AUX1      0x1000
-#define FKBD_BTN_AUX2      0x2000
-#define FKBD_BTN_AUX3      0x4000
+int map_init();
+int map_connect(const struct evdev_device *device); // Null to set no map.
+int map_event(const struct input_event *event);
+struct map *map_get(const char *name,int namec);
+struct map *map_new(const char *name,int namec);
+int map_buttonv_search(const struct map *map,int srctype,int srcbtnid); // If multiple, always returns the lowest matching index.
+int map_buttonv_insert(struct map *map,int p,int srctype,int srcbtnid,int srclo,int srchi,int dstbtnid);
+
+void uinput_close();
+int uinput_open();
+
+int fkbd_connect_path(const char *path);
 
 #endif

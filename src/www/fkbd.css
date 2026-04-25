@@ -1,0 +1,14 @@
+html {
+  background-color: #444;
+  color: #fff;
+}
+
+.RootUi {
+  display: flex;
+  flex-direction: column;
+}
+
+.RootUi > .topbar {
+  display: flex;
+  flex-direction: row;
+}
