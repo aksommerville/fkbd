@@ -33,7 +33,7 @@ int evdev_connect(const char *path) {
   
   g.evdev_path=strdup(path);
   
-  map_connect(0);
+  srcmap_connect(0);
   
   // If we have a record of this device, copy its name and search for a map.
   struct evdev_device *device=g.evdev_devicev;
@@ -43,7 +43,7 @@ int evdev_connect(const char *path) {
     if (device->name) {
       g.evdev_name=strdup(device->name);
     }
-    map_connect(device);
+    srcmap_connect(device);
     break;
   }
   
@@ -192,8 +192,7 @@ int evdev_update() {
     if (bufp>bufc-sizeof(struct input_event)) break;
     struct input_event *event=(struct input_event*)(buf+bufp);
     bufp+=sizeof(struct input_event);
-    int err=map_event(event);
-    if (err<0) return err;
+    srcmap_event(event);
   }
   return 0;
 }

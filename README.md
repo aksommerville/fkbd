@@ -6,7 +6,7 @@ For playing games without gamepad support.
 ## REST API
 
 All GET are static files (`src/www/`).
-Everything is POST, and it's a REST call.
+Everything else is POST, and it's a REST call.
 
 ```
 /heartbeat

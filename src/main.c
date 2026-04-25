@@ -174,6 +174,8 @@ int main(int argc,char **argv) {
   
   signal(SIGINT,rcvsig);
   
+  dstmap_init();
+  
   if ((err=http_init())<0) {
     if (err!=-2) fprintf(stderr,"%s: Unspecified error initializing HTTP server.\n",g.exename);
     return 1;
@@ -181,11 +183,6 @@ int main(int argc,char **argv) {
   
   if ((err=evdev_init())<0) {
     if (err!=-2) fprintf(stderr,"%s: Unspecified error initializing evdev.\n",g.exename);
-    return 1;
-  }
-  
-  if ((err=map_init())<0) {
-    if (err!=-2) fprintf(stderr,"%s: Unspecified error initializing map store.\n",g.exename);
     return 1;
   }
   
