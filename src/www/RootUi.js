@@ -8,18 +8,20 @@ import { Comm } from "./Comm.js";
 import { DevicesService } from "./DevicesService.js";
 import { SrcmapUi } from "./SrcmapUi.js";
 import { DstmapUi } from "./DstmapUi.js";
+import { MonitorService } from "./MonitorService.js";
 
 export class RootUi {
   static getDependencies() {
-    return [HTMLElement, Dom, Comm, Window, "nonce", DevicesService];
+    return [HTMLElement, Dom, Comm, Window, "nonce", DevicesService, MonitorService];
   }
-  constructor(element, dom, comm, window, nonce, devicesService) {
+  constructor(element, dom, comm, window, nonce, devicesService, monitorService) {
     this.element = element;
     this.dom = dom;
     this.comm = comm;
     this.window = window;
     this.nonce = nonce;
     this.devicesService = devicesService;
+    this.monitorService = monitorService;
     
     this.connected = false;
     this.devicePath = "";
@@ -51,8 +53,9 @@ export class RootUi {
     this.dom.spawn(topbar, "INPUT", { type: "button", value: "Shutdown...", "on-click": () => this.onShutdown() });
     this.dom.spawn(topbar, "INPUT", { type: "button", value: this.connected ? "Disconnect" : "Connect", id: `connect-${this.nonce}`, "on-click": () => this.onConnect() });
     this.dom.spawn(topbar, "INPUT", { type: "button", value: "Scan", "on-click": () => this.onScan() });
-    
-    const deviceSelect = this.dom.spawn(topbar, "SELECT", { id: `devices-${this.nonce}`, "on-change": () => this.onDeviceSelected() });
+    this.dom.spawn(topbar, "SELECT", { id: `devices-${this.nonce}`, "on-change": () => this.onDeviceSelected() });
+    this.dom.spawn(topbar, "INPUT", { type: "checkbox", name: "monitor", id: `monitor-${this.nonce}`, "on-change": () => this.onMonitorToggled() });
+    this.dom.spawn(topbar, "LABEL", { for: `monitor-${this.nonce}` }, "Monitor");
     
     const bottom = this.dom.spawn(this.element, "DIV", ["bottom"]);
     const srcmap = this.dom.spawnController(bottom, SrcmapUi);
@@ -136,5 +139,14 @@ export class RootUi {
   
   onScan() {
     this.devicesService.refresh(true);
+  }
+  
+  onMonitorToggled() {
+    const monitor = this.element.querySelector("input[name='monitor']")?.checked;
+    if (monitor) {
+      this.monitorService.enable(true);
+    } else {
+      this.monitorService.enable(false);
+    }
   }
 }

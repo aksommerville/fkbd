@@ -7,23 +7,26 @@ import { Comm } from "./Comm.js";
 import { DevicesService } from "./DevicesService.js";
 import { K } from "./Constants.js";
 import { PressKeyModal } from "./PressKeyModal.js";
+import { MonitorService } from "./MonitorService.js";
 
 export class DstmapUi {
   static getDependencies() {
-    return [HTMLElement, Dom, Comm, DevicesService, "nonce"];
+    return [HTMLElement, Dom, Comm, DevicesService, "nonce", MonitorService];
   }
-  constructor(element, dom, comm, devicesService, nonce) {
+  constructor(element, dom, comm, devicesService, nonce, monitorService) {
     this.element = element;
     this.dom = dom;
     this.comm = comm;
     this.devicesService = devicesService;
     this.nonce = nonce;
+    this.monitorService = monitorService;
     
     this.dstmap = []; // 32 ints. Linux EV_KEY codes indexed by fkbd button id (ie K.BTNIX_*)
     
     this.buildUi();
     
     this.connectedDeviceListener = this.devicesService.listenConnectedDevice(d => this.onConnect(d));
+    this.monitorListener = this.monitorService.listen(e => this.onMonitor(e));
     
     this.comm.httpJson("POST", "/dstmap").then(rsp => {
       this.dstmap = rsp;
@@ -33,6 +36,7 @@ export class DstmapUi {
   
   onRemoveFromDom() {
     this.devicesService.unlistenConnectedDevice(this.connectedDeviceListener);
+    this.monitorService.unlisten(this.monitorListener);
   }
   
   onConnect(device) {
@@ -130,5 +134,19 @@ export class DstmapUi {
       this.comm.httpJson("POST", "/dstmap", null, null, JSON.stringify(this.dstmap)).then(rsp => {
       }).catch(e => console.error(e));
     }).catch(e => console.error(e));
+  }
+  
+  onMonitor(event) {
+    /* Use (event.logical) to highlight our buttons.
+     */
+    for (const element of this.element.querySelectorAll(".monitor")) element.classList.remove("monitor");
+    if (event?.logical) {
+      for (let ix=0; ix<32; ix++) {
+        if (event.logical & (1 << ix)) {
+          const element = this.element.querySelector(`input[data-index='${ix}']`);
+          if (element) element.classList.add("monitor");
+        }
+      }
+    }
   }
 }

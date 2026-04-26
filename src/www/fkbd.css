@@ -34,6 +34,10 @@ html {
   margin-right: 5px;
 }
 
+.SrcmapUi .monitor {
+  background-color: #00f;
+}
+
 .DstmapUi {
   flex: 1;
 }
@@ -42,6 +46,10 @@ html {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
   grid-template-rows: repeat(9, 1fr);
+}
+
+.DstmapUi .monitor {
+  background-color: #ff0;
 }
 
 .PressKeyModal table {

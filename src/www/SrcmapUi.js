@@ -6,28 +6,32 @@ import { Dom } from "./Dom.js";
 import { Comm } from "./Comm.js";
 import { DevicesService } from "./DevicesService.js";
 import { K } from "./Constants.js";
+import { MonitorService } from "./MonitorService.js";
 
 export class SrcmapUi {
   static getDependencies() {
-    return [HTMLElement, Dom, Comm, DevicesService, "nonce"];
+    return [HTMLElement, Dom, Comm, DevicesService, "nonce", MonitorService];
   }
-  constructor(element, dom, comm, devicesService, nonce) {
+  constructor(element, dom, comm, devicesService, nonce, monitorService) {
     this.element = element;
     this.dom = dom;
     this.comm = comm;
     this.devicesService = devicesService;
     this.nonce = nonce;
+    this.monitorService = monitorService;
     
     this.srcmap = [];
     this.buildUi();
     this.populateUi();
     
     this.connectedDeviceListener = this.devicesService.listenConnectedDevice(d => this.onConnect(d));
+    this.monitorListener = this.monitorService.listen(e => this.onMonitor(e));
     this.refreshSrcmap();
   }
   
   onRemoveFromDom() {
     this.devicesService.unlistenConnectedDevice(this.connectedDeviceListener);
+    this.monitorService.unlisten(this.monitorListener);
   }
   
   refreshSrcmap() {
@@ -57,7 +61,7 @@ export class SrcmapUi {
     if (device) {
       for (let i=0; i<device.axes.length; i++) {
         const axis = device.axes[i];
-        const row = this.dom.spawn(caps, "DIV", ["row", "axis"]);
+        const row = this.dom.spawn(caps, "DIV", ["row", "axis"], { "data-index": i });
         this.dom.spawn(row, "DIV", ["capName"], `Axis ${axis.id} ${axis.lo}..${axis.hi}`);
         const select = this.dom.spawn(row, "SELECT", {
           id: `axis-${this.nonce}-${axis.id}-dstbtnid`,
@@ -78,7 +82,7 @@ export class SrcmapUi {
       }
       for (let i=0; i<device.buttons.length; i++) {
         const btnid = device.buttons[i];
-        const row = this.dom.spawn(caps, "DIV", ["row", "button"]);
+        const row = this.dom.spawn(caps, "DIV", ["row", "button"], { "data-index": i });
         this.dom.spawn(row, "DIV", ["capName"], `Button ${btnid}`);
         const select = this.dom.spawn(row, "SELECT", {
           id: `btn-${this.nonce}-${btnid}-dstbtnid`,
@@ -190,5 +194,31 @@ export class SrcmapUi {
     this.comm.httpJson("POST", "/srcmap", null, null, JSON.stringify(request)).then(rsp => {
       this.devicesService.refresh(); // We have the new content in (rsp) but meh, this is cleaner.
     }).catch(e => console.error(e));
+  }
+  
+  onMonitor(event) {
+    /* (event.axes) and (event.buttons) should be the same length as our axis and button rows.
+     * Highlight the key for each nonzero field.
+     * "nonzero" might not be correct for axes. I'll try not to worry about it.
+     */
+    for (const element of this.element.querySelectorAll(".monitor")) element.classList.remove("monitor");
+    if (event) {
+      if (event.axes) {
+        for (let ix=event.axes.length; ix-->0; ) {
+          if (event.axes[ix]) {
+            const row = this.element.querySelector(`.row.axis[data-index='${ix}']`);
+            if (row) row.classList.add("monitor");
+          }
+        }
+      }
+      if (event.buttons) {
+        for (let ix=event.buttons.length; ix-->0; ) {
+          if (event.buttons[ix]) {
+            const row = this.element.querySelector(`.row.button[data-index='${ix}']`);
+            if (row) row.classList.add("monitor");
+          }
+        }
+      }
+    }
   }
 }
