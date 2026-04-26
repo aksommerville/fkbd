@@ -116,10 +116,11 @@ extern struct g {
   int evdev_fd;
   char *evdev_path; // Copied on open, in case evdev_devicev gets rebuilt.
   char *evdev_name;
+  uint8_t evbtnv[(KEY_MAX+1)>>3]; // State of buttons in live device. Parallel to its device.btnbit.
+  int evabsv[ABS_MAX+1]; // ''. We don't reduce these to just the applicable ones, in order to reduce the burden when not monitoring.
   
   int ui_key_fd;
   int ui_mouse_fd;
-  //TODO device id etc, keep on hand
   int dstmap[32]; // KEY_*, corresponding to (srcmap.state) little-endianly.
   
   /* (srcmap) turns the evdev device into something akin to Standard Mapping,
@@ -153,6 +154,7 @@ int http_serve(struct http_client *client,const char *req,int reqc); // Must not
 int http_serve_split(struct http_client *client,const char *method,int methodc,const char *path,int pathc,const char *query,int queryc,const void *body,int bodyc);
 int http_client_wbuf_append(struct http_client *client,const char *src,int srcc);
 int http_client_wbuf_require(struct http_client *client);
+int http_client_respond(struct http_client *client,int status,const char *content_type,const void *body,int bodyc);
 
 int evdev_init();
 int evdev_update();
@@ -166,9 +168,14 @@ int uinput_open();
 
 int srcmap_connect(const struct evdev_device *device); // Null to drop mapping.
 void srcmap_event(const struct input_event *event);
+int srcmap_from_json(const char *src,int srcc);
+int srcmap_to_json(struct sr_encoder *dst);
+int srcmap_encode_state(struct sr_encoder *dst);
 
 void dstmap_init();
 void dstmap_event(uint32_t btnid,int value);
+int dstmap_from_json(const char *src,int srcc);
+int dstmap_to_json(struct sr_encoder *dst);
 
 int fkbd_connect_path(const char *path);
 

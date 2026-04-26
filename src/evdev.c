@@ -20,6 +20,8 @@ void evdev_disconnect() {
     free(g.evdev_name);
     g.evdev_name=0;
   }
+  memset(g.evbtnv,0,sizeof(g.evbtnv));
+  memset(g.evabsv,0,sizeof(g.evabsv));
 }
 
 /* Open new connection.
@@ -32,6 +34,8 @@ int evdev_connect(const char *path) {
   if ((g.evdev_fd=open(path,O_RDONLY))<0) return -1;
   
   g.evdev_path=strdup(path);
+  memset(g.evbtnv,0,sizeof(g.evbtnv));
+  memset(g.evabsv,0,sizeof(g.evabsv));
   
   srcmap_connect(0);
   

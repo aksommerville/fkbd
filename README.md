@@ -17,6 +17,13 @@ The main thing you use this for is to check that the server's still there.
 ```
 
 ```
+/devpath
+REQUEST:
+RESPONSE:
+  Plain text, device's path. Or empty if none connected.
+```
+
+```
 /shutdown
 REQUEST:
 RESPONSE:
@@ -59,4 +66,37 @@ Disconnect any curent device and connect this one.
 Omit path or send empty string to leave disconnected.
 ```
 
-TODO: Useful endpoints. List devices, list maps, pick a device, edit a map...
+```
+/srcmap
+REQUEST:
+RESPONSE:
+  [{
+    type: int,
+    code: int,
+    srclo: int,
+    srchi: int,
+    dst: int,
+  },...]
+If request not empty, it's the same shape as response, and you're requesting to replace it.
+```
+
+```
+/dstmap
+REQUEST:
+RESPONSE:
+  Array of 32 ints. Linux KEY_* codes indexed by fkbd button id.
+As with /srcmap, send a request in the response shape to write it.
+```
+
+```
+/state
+REQUEST:
+RESPONSE:
+  {
+    buttons: [int],
+    axes: [int],
+    logical: int,
+  }
+Shows a momentary snapshot of the input and intermediate device states.
+Call repeatedly and show results visually to help the user fix incorrect maps.
+```

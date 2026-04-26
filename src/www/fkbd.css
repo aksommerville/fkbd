@@ -3,6 +3,11 @@ html {
   color: #fff;
 }
 
+.row {
+  display: flex;
+  flex-direction: row;
+}
+
 .RootUi {
   display: flex;
   flex-direction: column;
@@ -11,4 +16,46 @@ html {
 .RootUi > .topbar {
   display: flex;
   flex-direction: row;
+}
+
+.RootUi > .bottom {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+}
+
+.SrcmapUi {
+  flex: 1;
+}
+
+.SrcmapUi .capName {
+  width: 150px;
+  text-align: right;
+  margin-right: 5px;
+}
+
+.DstmapUi {
+  flex: 1;
+}
+
+.DstmapUi .gamepad {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  grid-template-rows: repeat(9, 1fr);
+}
+
+.PressKeyModal table {
+  background-color: #666;
+}
+
+.PressKeyModal td.key {
+  background-color: #eee;
+  border: 1px solid #222;
+  min-width: 25px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.PressKeyModal td.key.highlight {
+  background-color: #ff0;
 }

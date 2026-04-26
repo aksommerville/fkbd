@@ -49,10 +49,7 @@ static int update_fdr(int fd) {
     int err=evdev_update();
     if (err<0) {
       if (err!=-2) fprintf(stderr,"%s: Unspecified error reading from evdev device.\n",g.exename);
-      close(g.evdev_fd);
-      g.evdev_fd=-1;
-      if (g.evdev_path) { free(g.evdev_path); g.evdev_path=0; }
-      if (g.evdev_name) { free(g.evdev_name); g.evdev_name=0; }
+      evdev_disconnect();
       uinput_close();
     }
     return 0;

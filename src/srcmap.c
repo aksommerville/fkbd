@@ -375,9 +375,32 @@ int srcmap_connect(const struct evdev_device *device) {
 void srcmap_event(const struct input_event *event) {
   if (event->type==EV_SYN) return;
   if (event->type==EV_MSC) return;
+  
+  /* EV_KEY and EV_ABS states get recorded globally for monitoring.
+   * This is argubaly evdev's problem, not ours, but we're kind of in a better spot for it.
+   * This state tracking is always on, even when not monitoring.
+   * So we've taken pains to keep it cheap.
+   */
+  switch (event->type) {
+    case EV_KEY: {
+        int major=event->code>>3;
+        if ((major>=0)&&(major<sizeof(g.evbtnv))) {
+          uint8_t mask=1<<(event->code&7);
+          if (event->value) g.evbtnv[major]|=mask;
+          else g.evbtnv[major]&=~mask;
+        }
+      } break;
+    case EV_ABS: {
+        if ((event->code>=0)&&(event->code<=ABS_MAX)) {
+          g.evabsv[event->code]=event->value;
+        }
+      } break;
+  }
+  
+  /* Then the real thing: Check maps registered for this button.
+   */
   int srcbtnp=srcmap_srcbtnv_search(event->type,event->code);
   if (srcbtnp<0) return;
-  int dirty=0;
   struct srcbtn *srcbtn=g.srcmap.srcbtnv+srcbtnp;
   for (;(srcbtnp<g.srcmap.srcbtnc)&&(srcbtn->code==event->code)&&(srcbtn->type==event->type);srcbtnp++,srcbtn++) {
     if (event->value==srcbtn->srcvalue) continue;
@@ -393,6 +416,120 @@ void srcmap_event(const struct input_event *event) {
       g.srcmap.state&=~srcbtn->dstbtnid;
     }
     dstmap_event(srcbtn->dstbtnid,dstvalue);
-    dirty=1;
   }
+}
+
+/* Replace per JSON from client.
+ */
+ 
+int srcmap_from_json(const char *src,int srcc) {
+
+  // Drop all held state.
+  if (g.srcmap.state) {
+    uint32_t bit=0x80000000;
+    for (;bit;bit>>=1) {
+      if (g.srcmap.state&bit) {
+        dstmap_event(bit,0);
+      }
+    }
+    g.srcmap.state=0;
+  }
+  g.srcmap.srcbtnc=0;
+  
+  struct sr_decoder decoder={.v=src,.c=srcc};
+  if (sr_decode_json_array_start(&decoder)<0) return -1;
+  while (sr_decode_json_next(0,&decoder)>0) {
+    int type=0,code=0,srclo=0,srchi=0,dst=0;
+    int octx=sr_decode_json_object_start(&decoder);
+    const char *k;
+    int kc;
+    while ((kc=sr_decode_json_next(&k,&decoder))>0) {
+           if ((kc==4)&&!memcmp(k,"type",4)) sr_decode_json_int(&type,&decoder);
+      else if ((kc==4)&&!memcmp(k,"code",4)) sr_decode_json_int(&code,&decoder);
+      else if ((kc==5)&&!memcmp(k,"srclo",5)) sr_decode_json_int(&srclo,&decoder);
+      else if ((kc==5)&&!memcmp(k,"srchi",5)) sr_decode_json_int(&srchi,&decoder);
+      else if ((kc==3)&&!memcmp(k,"dst",3)) sr_decode_json_int(&dst,&decoder);
+      else sr_decode_json_skip(&decoder);
+    }
+    if (sr_decode_json_end(&decoder,octx)<0) return -1;
+    if (srcmap_add_srcbtn(type,code,srclo,srchi,dst)<0) return -1;
+  }
+  return 0;
+}
+
+/* Encode current state to JSON.
+ */
+ 
+int srcmap_to_json(struct sr_encoder *dst) {
+  int actx=sr_encode_json_array_start(dst,0,0);
+  const struct srcbtn *srcbtn=g.srcmap.srcbtnv;
+  int i=g.srcmap.srcbtnc;
+  for (;i-->0;srcbtn++) {
+    int octx=sr_encode_json_object_start(dst,0,0);
+    sr_encode_json_int(dst,"type",4,srcbtn->type);
+    sr_encode_json_int(dst,"code",4,srcbtn->code);
+    sr_encode_json_int(dst,"srclo",5,srcbtn->srclo);
+    sr_encode_json_int(dst,"srchi",5,srcbtn->srchi);
+    sr_encode_json_int(dst,"dst",3,srcbtn->dstbtnid);
+    if (sr_encode_json_end(dst,octx)<0) return -1;
+  }
+  return sr_encode_json_end(dst,actx);
+}
+
+/* Encode volatile state.
+ */
+ 
+int srcmap_encode_state(struct sr_encoder *dst) {
+  int octx=sr_encode_json_object_start(dst,0,0);
+  
+  /* We can only populate the "buttons" and "axes" if we have the evdev_device it spawned from.
+   * Yep, we're searching the whole list for every update, by name.
+   */
+  struct evdev_device *device=0;
+  if (g.evdev_path) {
+    struct evdev_device *q=g.evdev_devicev;
+    int i=g.evdev_devicec;
+    for (;i-->0;q++) {
+      if (strcmp(q->path,g.evdev_path)) continue;
+      device=q;
+      break;
+    }
+  }
+  
+  // Buttons.
+  int actx=sr_encode_json_array_start(dst,"buttons",7);
+  if (device) {
+    int major=0;
+    for (;major<sizeof(device->btnbit);major++) {
+      if (!device->btnbit[major]) continue;
+      int minor=0;
+      for (;minor<8;minor++) {
+        if (!(device->btnbit[major]&(1<<minor))) continue;
+        int value=(g.evbtnv[major]&(1<<minor))?1:0;
+        sr_encode_json_int(dst,0,0,value);
+      }
+    }
+  }
+  sr_encode_json_end(dst,actx);
+  
+  // Axes.
+  actx=sr_encode_json_array_start(dst,"axes",4);
+  if (device) {
+    int major=0;
+    for (;major<sizeof(device->absbit);major++) {
+      if (!device->absbit[major]) continue;
+      int minor=0;
+      for (;minor<8;minor++) {
+        if (!(device->absbit[major]&(1<<minor))) continue;
+        int code=(major<<3)|minor;
+        sr_encode_json_int(dst,0,0,g.evabsv[code]);
+      }
+    }
+  }
+  sr_encode_json_end(dst,actx);
+  
+  // Logical state doesn't require the device, it's always real.
+  sr_encode_json_int(dst,"logical",7,g.srcmap.state);
+  
+  return sr_encode_json_end(dst,octx);
 }

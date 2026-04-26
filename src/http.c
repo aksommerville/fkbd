@@ -312,3 +312,41 @@ int http_client_wbuf_require(struct http_client *client) {
   }
   return 0;
 }
+
+/* High level, generate full response.
+ */
+ 
+int http_client_respond(struct http_client *client,int status,const char *content_type,const void *body,int bodyc) {
+  if ((status<100)||(status>999)) return -1;
+  if (!body) bodyc=0; else if (bodyc<0) { bodyc=0; while (((char*)body)[bodyc]) bodyc++; }
+  if (http_client_wbuf_append(client,"HTTP/1.1 ",9)<0) return -1;
+  char statusstr[3]={
+    '0'+status/100,
+    '0'+(status/10)%10,
+    '0'+status%10,
+  };
+  if (http_client_wbuf_append(client,statusstr,3)<0) return -1;
+  if (http_client_wbuf_append(client,"\r\nContent-Length: ",-1)<0) return -1;
+  if (bodyc>999999) return -1;
+  char clstr[6];
+  int clstrc=0;
+  if (bodyc>=100000) clstr[clstrc++]='0'+bodyc/100000;
+  if (bodyc>= 10000) clstr[clstrc++]='0'+(bodyc/10000)%10;
+  if (bodyc>=  1000) clstr[clstrc++]='0'+(bodyc/ 1000)%10;
+  if (bodyc>=   100) clstr[clstrc++]='0'+(bodyc/  100)%10;
+  if (bodyc>=    10) clstr[clstrc++]='0'+(bodyc/   10)%10;
+  clstr[clstrc++]='0'+bodyc%10;
+  if (http_client_wbuf_append(client,clstr,clstrc)<0) return -1;
+  if (http_client_wbuf_append(client,"\r\n",2)<0) return -1;
+  if (content_type&&content_type[0]) {
+    if (http_client_wbuf_append(client,"Content-Type: ",-1)<0) return -1;
+    if (http_client_wbuf_append(client,content_type,-1)<0) return -1;
+    if (http_client_wbuf_append(client,"\r\n",2)<0) return -1;
+  }
+  if (http_client_wbuf_append(client,"\r\n",2)<0) return -1;
+  if (bodyc) {
+    if (http_client_wbuf_append(client,body,bodyc)<0) return -1;
+    if (http_client_wbuf_append(client,"\r\n",2)<0) return -1;
+  }
+  return 0;
+}

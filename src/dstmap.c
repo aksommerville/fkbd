@@ -54,3 +54,31 @@ void dstmap_event(uint32_t btnid,int value) {
     if (write(fd,&event,sizeof(event))<0) uinput_close();
   }
 }
+
+/* Replace per JSON from client.
+ */
+ 
+int dstmap_from_json(const char *src,int srcc) {
+  memset(g.dstmap,0,sizeof(g.dstmap));
+  struct sr_decoder decoder={.v=src,.c=srcc};
+  if (sr_decode_json_array_start(&decoder)<0) return -1;
+  int btnix=0;
+  for (;btnix<32;btnix++) {
+    if (sr_decode_json_next(0,&decoder)<=0) break;
+    sr_decode_json_int(g.dstmap+btnix,&decoder);
+  }
+  return 0;
+}
+
+/* Encode current state to JSON.
+ */
+ 
+int dstmap_to_json(struct sr_encoder *dst) {
+  int actx=sr_encode_json_array_start(dst,0,0);
+  const int *v=g.dstmap;
+  int i=32;
+  for (;i-->0;v++) {
+    if (sr_encode_json_int(dst,0,0,*v)<0) return -1;
+  }
+  return sr_encode_json_end(dst,actx);
+}

@@ -5,30 +5,43 @@
  
 import { Dom } from "./Dom.js";
 import { Comm } from "./Comm.js";
+import { DevicesService } from "./DevicesService.js";
+import { SrcmapUi } from "./SrcmapUi.js";
+import { DstmapUi } from "./DstmapUi.js";
 
 export class RootUi {
   static getDependencies() {
-    return [HTMLElement, Dom, Comm, Window, "nonce"];
+    return [HTMLElement, Dom, Comm, Window, "nonce", DevicesService];
   }
-  constructor(element, dom, comm, window, nonce) {
+  constructor(element, dom, comm, window, nonce, devicesService) {
     this.element = element;
     this.dom = dom;
     this.comm = comm;
     this.window = window;
     this.nonce = nonce;
+    this.devicesService = devicesService;
     
     this.connected = false;
     this.devicePath = "";
     
     this.buildUi();
     
-    //this.heartbeatListener = this.comm.listen(connected => this.onHeartbeat(connected));
+    this.devicesListener = this.devicesService.listen(rsp => this.onDevicesChanged(rsp));
+    this.populateDevicesList(this.devicesService.devices);
     
-    this.refreshDeviceList();
+    this.comm.httpText("POST", "/devpath").then(rsp => {
+      if (rsp) {
+        this.devicePath = rsp;
+        this.element.querySelector(`#devices-${this.nonce}`).value = this.devicePath;
+        this.onConnected(true);
+      } else {
+        this.onConnected(false);
+      }
+    }).catch(e => console.error(e));
   }
   
   onRemoveFromDom() {
-    //this.comm.unlisten(this.heartbeatListener);
+    this.devicesService.unlisten(this.devicesListener);
   }
   
   buildUi() {
@@ -37,21 +50,23 @@ export class RootUi {
     const topbar = this.dom.spawn(this.element, "DIV", ["topbar"]);
     this.dom.spawn(topbar, "INPUT", { type: "button", value: "Shutdown...", "on-click": () => this.onShutdown() });
     this.dom.spawn(topbar, "INPUT", { type: "button", value: this.connected ? "Disconnect" : "Connect", id: `connect-${this.nonce}`, "on-click": () => this.onConnect() });
+    this.dom.spawn(topbar, "INPUT", { type: "button", value: "Scan", "on-click": () => this.onScan() });
     
     const deviceSelect = this.dom.spawn(topbar, "SELECT", { id: `devices-${this.nonce}`, "on-change": () => this.onDeviceSelected() });
+    
+    const bottom = this.dom.spawn(this.element, "DIV", ["bottom"]);
+    const srcmap = this.dom.spawnController(bottom, SrcmapUi);
+    const dstmap = this.dom.spawnController(bottom, DstmapUi);
   }
   
-  refreshDeviceList() {
-    this.comm.httpJson("POST", "/devices").then(rsp => {
-      console.log(`TODO RootUi repopulate device list`, rsp);
-      const select = this.element.querySelector(`#devices-${this.nonce}`);
-      select.innerHTML = "";
-      this.dom.spawn(select, "OPTION", { value: "", disabled: "disabled" }, "Choose a device...");
-      for (const device of rsp) {
-        this.dom.spawn(select, "OPTION", { value: device.path }, device.name);
-      }
-      select.value = this.devicePath;
-    }).catch(e => console.error(e));
+  populateDevicesList(devices) {
+    const select = this.element.querySelector(`#devices-${this.nonce}`);
+    select.innerHTML = "";
+    this.dom.spawn(select, "OPTION", { value: "", disabled: "disabled" }, "Choose a device...");
+    for (const device of devices) {
+      this.dom.spawn(select, "OPTION", { value: device.path }, device.name);
+    }
+    select.value = this.devicePath;
   }
   
   /* Events.
@@ -70,7 +85,7 @@ export class RootUi {
   
   onConnect() {
     if (this.connected) {
-      this.comm.httpText("POST", "/connect")
+      return this.comm.httpText("POST", "/connect")
         .then(() => this.onConnected(false))
         .catch(e => console.error(e));
     } else if (this.devicePath) {
@@ -86,13 +101,18 @@ export class RootUi {
   onConnected(connected) {
     connected = !!connected;
     if (connected === this.connected) return;
+    // Button's label indicates whether connected, and also we change document.title. Can see at a glance whether it's on, as I'm browsing games.
     const conbtn = this.element.querySelector(`#connect-${this.nonce}`);
     if (this.connected = connected) {
       this.window.document.title = "FKBD";
       conbtn.value = "Disconnect";
+      this.devicesService.setConnectedDevice(this.devicePath);
+      //TODO I'm not seeing srcmap when connected for the first time (fresh server)
+      // Maybe every time device changes? I've testing with just one. ...YES every time we change device, no need to reset anything to repro.
     } else {
       this.window.document.title = "fkbd";
       conbtn.value = "Connect";
+      this.devicesService.setConnectedDevice(null);
     }
   }
   
@@ -101,10 +121,20 @@ export class RootUi {
     const value = select.value;
     this.devicePath = select.value;
     // Choosing a device implicitly connects it, and disconnects any existing device.
+    let connect;
     if (this.connected) {
-      this.onConnect().then(() => this.onConnect());
+      connect = this.onConnect().then(() => this.onConnect());
     } else {
-      this.onConnect();
+      connect = this.onConnect();
     }
+    connect.catch(e => console.error(e));
+  }
+  
+  onDevicesChanged(rsp) {
+    this.populateDevicesList(rsp);
+  }
+  
+  onScan() {
+    this.devicesService.refresh(true);
   }
 }

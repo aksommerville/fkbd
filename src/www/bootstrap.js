@@ -7,7 +7,6 @@ import { RootUi } from "./RootUi.js";
  */
 
 window.addEventListener("load", () => {
-  console.log(`bootstrap started`);
   const injector = new Injector(window);
   const dom = injector.instantiate(Dom);
   const comm = injector.instantiate(Comm);

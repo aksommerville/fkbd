@@ -39,7 +39,7 @@ static const char *mime_type_from_path(const char *src,int srcc) {
  */
  
 static int http_serve_heartbeat(struct http_client *client) {
-  if (http_client_wbuf_append(client,"HTTP/1.1 222 TODO\r\nContent-Length: 1\r\nContent-Type: text/plain\r\n\r\n",-1)<0) return -1;
+  if (http_client_wbuf_append(client,"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Type: text/plain\r\n\r\n",-1)<0) return -1;
   if (g.evdev_fd>=0) {
     if (http_client_wbuf_append(client,"1\r\n",3)<0) return -1;
   } else {
@@ -116,7 +116,7 @@ static int http_serve_devices(struct http_client *client) {
     sr_encoder_cleanup(&encoder);
     return http_client_wbuf_append(client,"HTTP/1.1 500\r\nContent-Length: 0\r\n\r\n",-1);
   }
-  if (http_client_wbuf_append(client,"HTTP/1.1 222 TODO\r\nContent-Type: application/json\r\nContent-Length: ",-1)<0) {
+  if (http_client_wbuf_append(client,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ",-1)<0) {
     sr_encoder_cleanup(&encoder);
     return -1;
   }
@@ -155,7 +155,6 @@ static int http_serve_scan(struct http_client *client) {
  */
  
 static int http_serve_connect(struct http_client *client,const char *body,int bodyc) {
-  fprintf(stderr,"%s '%.*s'\n",__func__,bodyc,body);//TODO
   char path[1024];
   int pathc=0;
   struct sr_decoder decoder={.v=body,.c=bodyc};
@@ -177,12 +176,75 @@ static int http_serve_connect(struct http_client *client,const char *body,int bo
   }
   if (pathc) {
     if (fkbd_connect_path(path)<0) {
-      return http_client_wbuf_append(client,"HTTP/1.1 500 Failed to connect\r\nContent-Length: 0\r\n\r\n",-1);
+      return http_client_respond(client,500,0,0,0);
     }
   } else {
-    fprintf(stderr,"%s:TODO: Disconnect\n",__func__);
+    fkbd_connect_path(0);
   }
-  return http_client_wbuf_append(client,"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",-1);
+  return http_client_respond(client,200,0,0,0);
+}
+
+/* POST /srcmap
+ */
+ 
+static int http_serve_srcmap(struct http_client *client,const char *body,int bodyc) {
+  if (bodyc>0) {
+    if (srcmap_from_json(body,bodyc)<0) {
+      return http_client_respond(client,400,0,0,0);
+    }
+  }
+  struct sr_encoder serial={0};
+  if (srcmap_to_json(&serial)<0) {
+    sr_encoder_cleanup(&serial);
+    return http_client_respond(client,500,0,0,0);
+  }
+  int err=http_client_respond(client,200,"application/json",serial.v,serial.c);
+  sr_encoder_cleanup(&serial);
+  return err;
+}
+
+/* POST /dstmap
+ */
+ 
+static int http_serve_dstmap(struct http_client *client,const char *body,int bodyc) {
+  if (bodyc>0) {
+    if (dstmap_from_json(body,bodyc)<0) {
+      return http_client_respond(client,400,0,0,0);
+    }
+  }
+  struct sr_encoder serial={0};
+  if (dstmap_to_json(&serial)<0) {
+    sr_encoder_cleanup(&serial);
+    return http_client_respond(client,500,0,0,0);
+  }
+  int err=http_client_respond(client,200,"application/json",serial.v,serial.c);
+  sr_encoder_cleanup(&serial);
+  return err;
+}
+
+/* POST /state
+ */
+ 
+static int http_serve_state(struct http_client *client) {
+  struct sr_encoder serial={0};
+  if (srcmap_encode_state(&serial)<0) {
+    sr_encoder_cleanup(&serial);
+    return http_client_respond(client,500,0,0,0);
+  }
+  int err=http_client_respond(client,200,"application/json",serial.v,serial.c);
+  sr_encoder_cleanup(&serial);
+  return err;
+}
+
+/* POST /devpath
+ */
+ 
+static int http_serve_devpath(struct http_client *client) {
+  if ((g.evdev_fd>=0)&&g.evdev_path) {
+    return http_client_respond(client,200,"text/plain",g.evdev_path,-1);
+  } else {
+    return http_client_respond(client,200,"text/plain","",0);
+  }
 }
 
 /* Dispatch POST.
@@ -199,6 +261,10 @@ static int http_serve_post(
   if ((pathc==5)&&!memcmp(path,"/scan",5)) return http_serve_scan(client);
   if ((pathc==8)&&!memcmp(path,"/devices",8)) return http_serve_devices(client);
   if ((pathc==8)&&!memcmp(path,"/connect",8)) return http_serve_connect(client,body,bodyc);
+  if ((pathc==7)&&!memcmp(path,"/srcmap",7)) return http_serve_srcmap(client,body,bodyc);
+  if ((pathc==7)&&!memcmp(path,"/dstmap",7)) return http_serve_dstmap(client,body,bodyc);
+  if ((pathc==6)&&!memcmp(path,"/state",6)) return http_serve_state(client);
+  if ((pathc==8)&&!memcmp(path,"/devpath",8)) return http_serve_devpath(client);
   return http_client_wbuf_append(client,"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n",-1);
 }
 
